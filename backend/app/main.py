@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.routers import rooms, bookings, orders, menu, webhooks, inventory, attendance, payroll, shifts, housekeeping, dashboard
+from app.routers import settings as settings_router
 
 settings = get_settings()
 
@@ -34,6 +35,7 @@ app.include_router(payroll.router)
 app.include_router(shifts.router)
 app.include_router(housekeeping.router)
 app.include_router(dashboard.router)
+app.include_router(settings_router.router)
 
 
 @app.get("/", tags=["Health"])

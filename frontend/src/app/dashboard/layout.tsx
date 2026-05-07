@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/housekeeping", label: "Buồng phòng", icon: "🧹" },
   { href: "/dashboard/attendance", label: "Chấm công", icon: "⏰" },
   { href: "/dashboard/payroll", label: "Bảng lương", icon: "💰" },
+  { href: "/dashboard/settings", label: "Cài đặt", icon: "⚙️" },
 ];
 
 export default function DashboardLayout({

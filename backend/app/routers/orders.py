@@ -43,7 +43,7 @@ async def get_order(
         .select("*, order_details(*, menu_items(name, category))")
         .eq("id", order_id)
         .eq("branch_id", current_user["branch_id"])
-        .single()
+        .maybe_single()
         .execute()
     )
     if not order.data:
@@ -136,7 +136,7 @@ async def create_order(
         sb.table("orders")
         .select("*, order_details(*, menu_items(name))")
         .eq("id", order_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     return {"data": final.data, "message": "Order created with BOM deduction"}

@@ -55,7 +55,7 @@ async def get_shift(
         .select("*")
         .eq("id", shift_id)
         .eq("branch_id", current_user["branch_id"])
-        .single()
+        .maybe_single()
         .execute()
     )
     if not result.data:

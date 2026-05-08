@@ -58,7 +58,7 @@ async def sepay_webhook(request: Request):
         sb.table("orders")
         .select("id, branch_id, final_amount, payment_status")
         .eq("order_number", order_number)
-        .single()
+        .maybe_single()
         .execute()
     )
 

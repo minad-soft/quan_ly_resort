@@ -57,7 +57,7 @@ async def adjust_stock(
         .select("id, name, quantity_on_hand, unit")
         .eq("id", body.inventory_item_id)
         .eq("branch_id", branch_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     if not item.data:

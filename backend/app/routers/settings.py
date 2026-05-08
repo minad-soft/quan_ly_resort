@@ -53,7 +53,7 @@ async def get_branch_info(
     sb = get_supabase_admin()
     branch_id = current_user["branch_id"]
 
-    result = sb.table("branches").select("*").eq("id", branch_id).single().execute()
+    result = sb.table("branches").select("*").eq("id", branch_id).maybe_single().execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Chi nhánh không tồn tại")

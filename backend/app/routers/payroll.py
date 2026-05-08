@@ -67,7 +67,7 @@ async def payroll_summary(
         .eq("user_id", user_id)
         .eq("year", year)
         .eq("month", month)
-        .single()
+        .maybe_single()
         .execute()
     )
 

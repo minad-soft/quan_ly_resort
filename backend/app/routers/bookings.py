@@ -43,7 +43,7 @@ async def create_booking(
         .select("id, status, room_type_id")
         .eq("id", body.room_id)
         .eq("branch_id", branch_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     if not room.data:
@@ -99,7 +99,7 @@ async def check_in(
         .select("*")
         .eq("id", booking_id)
         .eq("branch_id", current_user["branch_id"])
-        .single()
+        .maybe_single()
         .execute()
     )
     if not booking.data:
@@ -132,7 +132,7 @@ async def check_out(
         .select("*")
         .eq("id", booking_id)
         .eq("branch_id", current_user["branch_id"])
-        .single()
+        .maybe_single()
         .execute()
     )
     if not booking.data:

@@ -105,7 +105,7 @@ async def attendance_check_out(
         .select("*")
         .eq("id", attendance_id)
         .eq("user_id", current_user["id"])
-        .single()
+        .maybe_single()
         .execute()
     )
     if not record.data:

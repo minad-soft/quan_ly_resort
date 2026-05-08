@@ -43,7 +43,7 @@ async def get_room(
         .select("*, room_types(*)")
         .eq("id", room_id)
         .eq("branch_id", current_user["branch_id"])
-        .single()
+        .maybe_single()
         .execute()
     )
     if not result.data:

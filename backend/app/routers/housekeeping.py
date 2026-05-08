@@ -93,7 +93,7 @@ async def update_housekeeping_status(
         .select("id, room_number, status")
         .eq("id", room_id)
         .eq("branch_id", branch_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     if not existing.data:

@@ -1,7 +1,6 @@
 from fastapi import Depends, HTTPException, status, Header
 from supabase import Client
-from app.database import get_supabase
-
+from app.database import get_supabase, get_supabase_admin
 
 async def get_current_user(
     authorization: str = Header(..., description="Bearer <access_token>"),
@@ -31,11 +30,13 @@ async def get_current_user(
         auth_user = user_response.user
 
         # Get user profile with branch_id and role
+        # Use admin client to bypass RLS for auth middleware
+        sb_admin = get_supabase_admin()
         profile = (
-            sb.table("users")
+            sb_admin.table("users")
             .select("id, branch_id, full_name, email, role, is_active")
             .eq("id", auth_user.id)
-            .single()
+            .maybe_single()
             .execute()
         )
 

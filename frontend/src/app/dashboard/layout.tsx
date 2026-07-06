@@ -8,13 +8,17 @@ import Link from "next/link";
 const NAV_ITEMS = [
   { href: "/dashboard/rooms", label: "Sơ đồ phòng", icon: "🏨" },
   { href: "/dashboard/pos", label: "POS Order", icon: "🍽️" },
+  { href: "/dashboard/orders", label: "Đơn hàng", icon: "🧾" },
   { href: "/dashboard/bookings", label: "Đặt phòng", icon: "📋" },
   { href: "/dashboard/inventory", label: "Kho", icon: "📦" },
   { href: "/dashboard/housekeeping", label: "Buồng phòng", icon: "🧹" },
   { href: "/dashboard/attendance", label: "Chấm công", icon: "⏰" },
   { href: "/dashboard/payroll", label: "Bảng lương", icon: "💰" },
   { href: "/dashboard/employees", label: "Nhân sự", icon: "👥" },
+  { href: "/dashboard/commission", label: "Hoa hồng", icon: "🏧" },
   { href: "/dashboard/room-settings", label: "Cài đặt phòng", icon: "🛏️" },
+  { href: "/dashboard/settings/services", label: "Cài đặt dịch vụ", icon: "🎟️" },
+  { href: "/dashboard/settings/print", label: "Mẫu in", icon: "🖨️" },
   { href: "/dashboard/settings", label: "Cài đặt", icon: "⚙️" },
 ];
 

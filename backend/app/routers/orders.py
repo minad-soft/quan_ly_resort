@@ -131,12 +131,354 @@ async def create_order(
         created_by=current_user["id"],
     )
 
+    # Process Payments if provided
+    total_paid = 0
+    if body.payments:
+        # Lấy/tạo payment_methods
+        method_types = list(set([p.method_type for p in body.payments]))
+        existing_methods_result = (
+            sb.table("branch_payment_methods")
+            .select("id, method_type")
+            .eq("branch_id", branch_id)
+            .in_("method_type", method_types)
+            .execute()
+        )
+        existing_methods = {m["method_type"]: m["id"] for m in existing_methods_result.data}
+
+        payment_inserts = []
+        for p in body.payments:
+            if p.amount <= 0:
+                continue
+
+            method_id = existing_methods.get(p.method_type)
+            if not method_id:
+                # Tạo mới
+                new_method_name = {
+                    "cash": "Tiền mặt",
+                    "bank_transfer": "Chuyển khoản",
+                    "card": "Quẹt thẻ",
+                    "e_wallet": "Ví điện tử"
+                }.get(p.method_type, "Khác")
+                
+                new_method = (
+                    sb.table("branch_payment_methods")
+                    .insert({
+                        "branch_id": branch_id,
+                        "name": new_method_name,
+                        "method_type": p.method_type,
+                        "is_active": True
+                    })
+                    .execute()
+                )
+                if new_method.data:
+                    method_id = new_method.data[0]["id"]
+                    existing_methods[p.method_type] = method_id
+            
+            payment_inserts.append({
+                "branch_id": branch_id,
+                "order_id": order_id,
+                "payment_method_id": method_id,
+                "amount": p.amount,
+                "status": "completed",
+                "created_by": current_user["id"],
+                "notes": f"POS thanh toán - {p.method_type}"
+            })
+            total_paid += p.amount
+
+        if payment_inserts:
+            sb.table("payments").insert(payment_inserts).execute()
+        
+from fastapi import APIRouter, Depends, HTTPException, Query
+from app.dependencies import get_current_user
+from app.database import get_supabase_admin
+from app.schemas.orders import OrderCreate
+from app.services.bom_service import deduct_bom_for_order
+from typing import Optional
+
+router = APIRouter(prefix="/api/orders", tags=["Orders"])
+
+
+@router.get("")
+async def list_orders(
+    payment_status: Optional[str] = Query(None),
+    order_type: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Danh sách hóa đơn theo chi nhánh."""
+    sb = get_supabase_admin()
+    query = (
+        sb.table("orders")
+        .select("*")
+        .eq("branch_id", current_user["branch_id"])
+        .order("created_at", desc=True)
+    )
+    if payment_status:
+        query = query.eq("payment_status", payment_status)
+    if order_type:
+        query = query.eq("order_type", order_type)
+
+    result = query.execute()
+    return {"data": result.data, "count": len(result.data)}
+
+
+@router.get("/{order_id}")
+async def get_order(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Chi tiết hóa đơn + line items."""
+    sb = get_supabase_admin()
+    order = (
+        sb.table("orders")
+        .select("*, order_details(*, menu_items(name, category))")
+        .eq("id", order_id)
+        .eq("branch_id", current_user["branch_id"])
+        .maybe_single()
+        .execute()
+    )
+    if not order.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    order_data = order.data
+    order_details = order_data.get("order_details", [])
+    
+    if order_details:
+        menu_ids = [d["menu_item_id"] for d in order_details]
+        packages = (
+            sb.table("package_includes")
+            .select("*, child:menu_items!child_item_id(name)")
+            .in_("parent_item_id", menu_ids)
+            .eq("branch_id", current_user["branch_id"])
+            .execute()
+        )
+        order_data["package_tickets"] = packages.data if packages.data else []
+    else:
+        order_data["package_tickets"] = []
+        
+    return {"data": order_data}
+
+
+@router.post("")
+async def create_order(
+    body: OrderCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Tạo hóa đơn mới.
+    - Tự động tính tổng tiền từ menu_items
+    - Tự động trừ kho theo BOM
+    - Ghi log inventory_transactions
+    """
+    sb = get_supabase_admin()
+    branch_id = current_user["branch_id"]
+
+    if not body.items:
+        raise HTTPException(status_code=400, detail="Order must have at least one item")
+
+    # Get menu item prices
+    menu_ids = [item.menu_item_id for item in body.items]
+    menu_result = (
+        sb.table("menu_items")
+        .select("id, price, name, is_available")
+        .in_("id", menu_ids)
+        .eq("branch_id", branch_id)
+        .execute()
+    )
+    menu_map = {m["id"]: m for m in menu_result.data}
+
+    # Validate items and calculate totals
+    order_details = []
+    total_amount = 0
+
+    for item in body.items:
+        menu_item = menu_map.get(item.menu_item_id)
+        if not menu_item:
+            raise HTTPException(status_code=404, detail=f"Menu item not found: {item.menu_item_id}")
+        if not menu_item.get("is_available", True):
+            raise HTTPException(status_code=400, detail=f"'{menu_item['name']}' is not available")
+
+        subtotal = menu_item["price"] * item.quantity
+        total_amount += subtotal
+        order_details.append({
+            "menu_item_id": item.menu_item_id,
+            "quantity": item.quantity,
+            "unit_price": menu_item["price"],
+            "subtotal": subtotal,
+            "notes": item.notes,
+        })
+
+    final_amount = total_amount - body.discount_amount
+
+    # Create order (order_number auto-generated by trigger)
+    order_data = {
+        "branch_id": branch_id,
+        "booking_id": body.booking_id,
+        "order_type": body.order_type,
+        "total_amount": total_amount,
+        "discount_amount": body.discount_amount,
+        "final_amount": final_amount,
+        "notes": body.notes,
+        "created_by": current_user["id"],
+    }
+
+    order_result = sb.table("orders").insert(order_data).execute()
+    order = order_result.data[0]
+    order_id = order["id"]
+
+    # Insert order details
+    for detail in order_details:
+        detail["order_id"] = order_id
+    sb.table("order_details").insert(order_details).execute()
+
+    # BOM deduction
+    await deduct_bom_for_order(
+        order_id=order_id,
+        branch_id=branch_id,
+        items=[{"menu_item_id": d["menu_item_id"], "quantity": d["quantity"]} for d in order_details],
+        created_by=current_user["id"],
+    )
+
+    # Process Payments if provided
+    total_paid = 0
+    if body.payments:
+        # Lấy/tạo payment_methods
+        method_types = list(set([p.method_type for p in body.payments]))
+        existing_methods_result = (
+            sb.table("branch_payment_methods")
+            .select("id, method_type")
+            .eq("branch_id", branch_id)
+            .in_("method_type", method_types)
+            .execute()
+        )
+        existing_methods = {m["method_type"]: m["id"] for m in existing_methods_result.data}
+
+        payment_inserts = []
+        for p in body.payments:
+            if p.amount <= 0:
+                continue
+
+            method_id = existing_methods.get(p.method_type)
+            if not method_id:
+                # Tạo mới
+                new_method_name = {
+                    "cash": "Tiền mặt",
+                    "bank_transfer": "Chuyển khoản",
+                    "card": "Quẹt thẻ",
+                    "e_wallet": "Ví điện tử"
+                }.get(p.method_type, "Khác")
+                
+                new_method = (
+                    sb.table("branch_payment_methods")
+                    .insert({
+                        "branch_id": branch_id,
+                        "name": new_method_name,
+                        "method_type": p.method_type,
+                        "is_active": True
+                    })
+                    .execute()
+                )
+                if new_method.data:
+                    method_id = new_method.data[0]["id"]
+                    existing_methods[p.method_type] = method_id
+            
+            payment_inserts.append({
+                "branch_id": branch_id,
+                "order_id": order_id,
+                "payment_method_id": method_id,
+                "amount": p.amount,
+                "status": "completed",
+                "created_by": current_user["id"],
+                "notes": f"POS thanh toán - {p.method_type}"
+            })
+            total_paid += p.amount
+
+        if payment_inserts:
+            sb.table("payments").insert(payment_inserts).execute()
+        
+        # Update order payment status
+        if total_paid >= final_amount:
+            sb.table("orders").update({"payment_status": "paid"}).eq("id", order_id).execute()
+        elif total_paid > 0:
+            sb.table("orders").update({"payment_status": "partial"}).eq("id", order_id).execute()
+
     # Return complete order
     final = (
         sb.table("orders")
-        .select("*, order_details(*, menu_items(name))")
+        .select("*, order_details(*, menu_items(name)), payments(*)")
         .eq("id", order_id)
         .maybe_single()
         .execute()
     )
-    return {"data": final.data, "message": "Order created with BOM deduction"}
+    order_data = final.data
+
+    # Fetch package tickets if any
+    menu_ids = [d["menu_item_id"] for d in order_details]
+    packages = (
+        sb.table("package_includes")
+        .select("*, child:menu_items!child_item_id(name)")
+        .in_("parent_item_id", menu_ids)
+        .eq("branch_id", branch_id)
+        .execute()
+    )
+    if packages.data:
+        order_data["package_tickets"] = packages.data
+    else:
+        order_data["package_tickets"] = []
+
+    return {"data": order_data, "message": "Order created with BOM deduction and payments processed"}
+
+
+@router.post("/{order_id}/print-invoice")
+async def print_invoice(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Đánh dấu in hóa đơn và tăng biến đếm.
+    - Lần đầu tiên: cho phép tất cả.
+    - Lần thứ 2 trở đi: chỉ admin / manager.
+    """
+    sb = get_supabase_admin()
+    
+    order_res = sb.table("orders").select("invoice_print_count").eq("id", order_id).eq("branch_id", current_user["branch_id"]).maybe_single().execute()
+    if not order_res.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    current_count = order_res.data.get("invoice_print_count", 0)
+    
+    if current_count > 0:
+        if current_user.get("role") not in ["admin", "manager"]:
+            raise HTTPException(status_code=403, detail="Chỉ Quản lý hoặc Quản trị viên mới được phép in lại hóa đơn.")
+            
+    new_count = current_count + 1
+    sb.table("orders").update({"invoice_print_count": new_count}).eq("id", order_id).execute()
+    
+    return {"message": "Success", "print_count": new_count}
+
+
+@router.post("/{order_id}/print-tickets")
+async def print_tickets(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Đánh dấu in vé đi kèm và tăng biến đếm.
+    - Lần đầu tiên: cho phép tất cả.
+    - Lần thứ 2 trở đi: chỉ admin / manager.
+    """
+    sb = get_supabase_admin()
+    
+    order_res = sb.table("orders").select("ticket_print_count").eq("id", order_id).eq("branch_id", current_user["branch_id"]).maybe_single().execute()
+    if not order_res.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    current_count = order_res.data.get("ticket_print_count", 0)
+    
+    if current_count > 0:
+        if current_user.get("role") not in ["admin", "manager"]:
+            raise HTTPException(status_code=403, detail="Chỉ Quản lý hoặc Quản trị viên mới được phép in lại vé.")
+            
+    new_count = current_count + 1
+    sb.table("orders").update({"ticket_print_count": new_count}).eq("id", order_id).execute()
+    
+    return {"message": "Success", "print_count": new_count}

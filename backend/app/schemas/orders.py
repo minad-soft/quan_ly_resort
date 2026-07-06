@@ -9,10 +9,16 @@ class OrderItemCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class PaymentCreate(BaseModel):
+    method_type: str  # cash, bank_transfer, card, e_wallet, other
+    amount: float
+
+
 class OrderCreate(BaseModel):
     booking_id: Optional[str] = None
     order_type: str = "fnb"  # fnb, service, retail, room_charge
     items: list[OrderItemCreate]
+    payments: Optional[list[PaymentCreate]] = None
     discount_amount: float = 0
     notes: Optional[str] = None
 

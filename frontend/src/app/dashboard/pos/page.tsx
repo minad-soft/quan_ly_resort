@@ -123,6 +123,39 @@ export default function POSPage() {
     return `https://img.vietqr.io/image/${bankId}-${accountNo}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(content)}&accountName=${encodeURIComponent(accountName)}`;
   };
 
+  const handlePrintInvoice = async (orderId: string) => {
+    try {
+      const res = await apiFetch(`/api/orders/${orderId}/print-invoice`, { method: "POST" });
+      setPrintMode("invoice");
+      setPrintCount(res.print_count);
+      setTimeout(() => window.print(), 300);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handlePrintTickets = async (orderId: string) => {
+    try {
+      const res = await apiFetch(`/api/orders/${orderId}/print-tickets`, { method: "POST" });
+      setPrintMode("tickets");
+      setPrintCount(res.print_count);
+      setTimeout(() => window.print(), 300);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const renderTemplate = (template: string, data: any) => {
+    if (!template) return null;
+    try {
+      const compiled = Handlebars.compile(template);
+      return compiled(data);
+    } catch (err) {
+      console.error("Template rendering error:", err);
+      return "Lỗi mẫu in. Vui lòng kiểm tra lại cấu hình Cài đặt.";
+    }
+  };
+
   return (
     <>
     <div className="flex h-screen print:hidden">
@@ -476,7 +509,7 @@ export default function POSPage() {
               const tickets = orderSuccess.package_tickets.filter((t: any) => t.parent_item_id === d.menu_item_id);
               if (tickets.length === 0) return null;
               
-              const ticketsToPrint = [];
+              const ticketsToPrint: string[] = [];
               for (let i = 0; i < d.quantity; i++) {
                 tickets.forEach((t: any) => {
                   for (let j = 0; j < t.quantity; j++) {
